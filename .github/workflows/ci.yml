@@ -74,3 +74,66 @@ jobs:
       - name: Aufräumen
         if: always()
         run: docker compose down -v
+
+  deploy:
+    needs: images
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    env:
+      IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26.13.0
+      - name: Lauf-Kennung festlegen
+        run: |
+          RUN_ID="${{ github.event.repository.name }}"
+          RUN_ID="${RUN_ID#levelboard-}"
+          echo "RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
+          if [ -z "${{ vars.LIVE_DOMAIN }}" ]; then
+            echo "LIVE_DOMAIN fehlt" >&2
+            exit 1
+          fi
+          echo "LIVE_URL=https://$RUN_ID.${{ vars.LIVE_DOMAIN }}" >> "$GITHUB_ENV"
+      - name: SSH-Zugang vorbereiten
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: Ordner anlegen und Dateien übertragen
+        run: |
+          ssh -o StrictHostKeyChecking=yes "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "mkdir -p ~/runs/$RUN_ID"
+          scp -o StrictHostKeyChecking=yes deploy/compose.yml "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:~/runs/$RUN_ID/compose.yml"
+          printf 'RUN_ID=%s\nIMAGE_PREFIX=%s\nIMAGE_TAG=%s\n' "$RUN_ID" "$IMAGE_PREFIX" "$IMAGE_TAG" > .env
+          scp -o StrictHostKeyChecking=yes .env "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:~/runs/$RUN_ID/.env"
+      - name: Container starten
+        run: |
+          ssh -o StrictHostKeyChecking=yes "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "cd ~/runs/$RUN_ID && docker compose pull -q && docker compose up -d --wait --remove-orphans"
+      - name: Auf Live-Adresse warten
+        run: |
+          for i in $(seq 1 180); do
+            if curl -sf "$LIVE_URL/api/health" | grep -q "\"commit\":\"$IMAGE_TAG\""; then
+              echo "Live-Seite meldet Commit $IMAGE_TAG"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Live-Seite wurde nicht rechtzeitig erreichbar" >&2
+          exit 1
+      - name: Report laden
+        uses: actions/download-artifact@v8
+        with:
+          name: levelboard-report
+      - name: An die Live-API melden
+        run: node checks/report-live.mjs frontend/dist/results.json "$LIVE_URL"
+      - name: Live-Seite prüfen
+        run: |
+          curl -sf "$LIVE_URL/" -o /dev/null
+          curl -sf "$LIVE_URL/config.json" | grep -q '"api"'
