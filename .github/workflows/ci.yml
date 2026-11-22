@@ -30,3 +30,47 @@ jobs:
           path: |
             frontend/dist/results.json
             checks/.out/playwright.json
+
+  images:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+      IMAGE_TAG: ${{ github.sha }}
+      SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26.13.0
+      - name: Images bauen
+        run: docker compose build
+      - name: Container starten
+        run: docker compose up -d --wait
+      - name: Container-Suite
+        run: |
+          cd checks
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test tests/container.spec.ts
+      - name: Container-Report hochladen
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: levelboard-container-report
+          path: checks/.out/playwright.json
+      - name: In die GHCR pushen
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker compose push
+          docker tag "$IMAGE_PREFIX-backend:$IMAGE_TAG" "$IMAGE_PREFIX-backend:main"
+          docker tag "$IMAGE_PREFIX-frontend:$IMAGE_TAG" "$IMAGE_PREFIX-frontend:main"
+          docker push "$IMAGE_PREFIX-backend:main"
+          docker push "$IMAGE_PREFIX-frontend:main"
+      - name: Aufräumen
+        if: always()
+        run: docker compose down -v
