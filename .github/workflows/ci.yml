@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ghcr.io/specrun-lab/devcontainer:1
+      options: --user root
+    env:
+      GOMODCACHE: /home/dev/go/pkg/mod
+      GOCACHE: /home/dev/.cache/go-build
+      GOFLAGS: -modcacherw -buildvcs=false
+    steps:
+      - uses: actions/checkout@v7
+      - name: Level 5 starten
+        run: make level5
+      - name: Prüfen
+        run: make check
+      - name: Artefakt hochladen
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: levelboard-report
+          path: |
+            frontend/dist/results.json
+            checks/.out/playwright.json
