@@ -22,9 +22,10 @@ function pad2(n: number): string {
 }
 
 function fmtBuildS(s: number): string {
-  if (s < 60) return `${Math.round(s)} s`;
-  const m = Math.floor(s / 60);
-  const sec = Math.round(s % 60);
+  const r = Math.round(s);
+  if (r < 60) return `${r} s`;
+  const m = Math.floor(r / 60);
+  const sec = r % 60;
   return `${m}:${pad2(sec)} min`;
 }
 
@@ -67,8 +68,11 @@ test.describe('level-10', () => {
     if (fs.existsSync(bauzeitPath)) {
       const b = JSON.parse(fs.readFileSync(bauzeitPath, 'utf8'));
       for (const [k, v] of Object.entries(b.levels || {})) build[k] = v;
-    } else {
-      build['1'] = { passedAt: new Date().toISOString(), buildS: 1 };
+    }
+    for (let i = 1; i <= 10; i++) {
+      if (!build[String(i)]) {
+        build[String(i)] = { passedAt: new Date().toISOString(), buildS: 1 };
+      }
     }
 
     const bericht = { pipeline, images: { frontendMB, backendMB }, loadtest, build };
